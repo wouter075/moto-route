@@ -574,6 +574,16 @@ function extractLinePoints(element, name) {
             opacity: 0.8
         });
         
+        polyline.on('click', () => {
+            if (polyline.pm.enabled()) {
+                polyline.pm.disable();
+            } else {
+                // Disable others first to focus on this one
+                importedRoutesGroup.eachLayer(l => l.pm.disable());
+                polyline.pm.enable();
+            }
+        });
+        
         importedRoutesGroup.addLayer(polyline);
         const routeObj = { id: L.stamp(polyline), name, color, layer: polyline };
         importedRoutes.push(routeObj);
@@ -590,9 +600,10 @@ function updateImportedRoutesUI() {
         div.style.alignItems = 'center';
         div.style.justifyContent = 'space-between';
         div.style.padding = '8px';
-        div.style.background = 'var(--surface-color, #fff)';
-        div.style.border = '1px solid var(--border, #eee)';
+        div.style.background = 'rgba(255, 255, 255, 0.05)';
+        div.style.border = '1px solid var(--border)';
         div.style.borderRadius = '4px';
+        div.style.color = 'var(--text-main)';
         
         div.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
