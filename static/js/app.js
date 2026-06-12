@@ -66,6 +66,15 @@ const gpxUpload = document.getElementById('gpx-upload');
 const importedRoutesList = document.getElementById('imported-routes-list');
 const btnImportClear = document.getElementById('btn-import-clear');
 
+const simplifySlider = document.getElementById('simplify-slider');
+const simplifyVal = document.getElementById('simplify-val');
+const simplifyLabels = ['Off', 'Low', 'Medium', 'High'];
+const simplifyTolerances = [0, 0.0005, 0.002, 0.008]; // Tolerance in degrees
+
+simplifySlider.addEventListener('input', (e) => {
+    simplifyVal.innerText = simplifyLabels[e.target.value];
+});
+
 const exportFilenameInput = document.getElementById('export-filename');
 exportFilenameInput.addEventListener('input', (e) => {
     let val = e.target.value.trim();
@@ -565,6 +574,21 @@ function extractLinePoints(element, name) {
     });
     
     if (pts.length > 1) {
+        // Apply Simplification if enabled
+        const level = parseInt(simplifySlider.value);
+        if (level > 0 && typeof turf !== 'undefined') {
+            try {
+                const lineString = turf.lineString(pts.map(p => [p[1], p[0]])); // turf uses [lon, lat]
+                const simplified = turf.simplify(lineString, {
+                    tolerance: simplifyTolerances[level], 
+                    highQuality: true
+                });
+                pts = simplified.geometry.coordinates.map(p => [p[1], p[0]]); // back to [lat, lon]
+            } catch (err) {
+                console.error("Simplification error", err);
+            }
+        }
+
         const color = routeColors[colorIndex % routeColors.length];
         colorIndex++;
         

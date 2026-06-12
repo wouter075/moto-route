@@ -96,6 +96,16 @@
                     <label>Upload GPX File</label>
                     <input type="file" id="gpx-upload" accept=".gpx" class="custom-input" style="padding: 8px;">
                 </div>
+                
+                <div class="control-group" style="margin-top: 8px;">
+                    <label style="display:flex; justify-content:space-between;">
+                        <span>Simplify Route</span>
+                        <span id="simplify-val" style="color:var(--primary);">Medium</span>
+                    </label>
+                    <input type="range" id="simplify-slider" min="0" max="3" value="2" style="width:100%; cursor:pointer;">
+                    <p style="font-size:12px; color:var(--text-muted); margin-top:2px;">Reduces points so the route is easier to edit.</p>
+                </div>
+                
                 <div class="control-group instructions" style="margin-top: 8px;">
                     <p>Uploaded routes will be rendered on the map. Use the map's edit toolbar to adjust them.</p>
                 </div>
@@ -151,6 +161,9 @@
      
     <!-- Leaflet Geoman JS -->
     <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.js"></script>
+     
+    <!-- Turf.js for Geometry Simplification -->
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
      
     <!-- App JS -->
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
