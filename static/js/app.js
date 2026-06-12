@@ -329,10 +329,13 @@ function clearAll() {
 btnClear.addEventListener('click', clearAll);
 btnRtClear.addEventListener('click', clearAll);
 
-// Calculate Route Extracted Logic
-async function calculateAndDrawRoute(lonlats) {
-    const profile = selectProfile.value;
-    const apiUrl = `https://brouter.de/brouter?lonlats=${lonlats}&profile=${profile}&alternativeidx=0&format=geojson`;
+// Calculate Route via BRouter
+async function calculateAndDrawRoute(lonlats, nogoStr = '') {
+    const profile = document.getElementById('route-profile').value;
+    let apiUrl = `https://brouter.de/brouter?lonlats=${lonlats}&profile=${profile}&alternativeidx=0&format=geojson`;
+    if (nogoStr) {
+        apiUrl += `&nogo=${nogoStr}`;
+    }
     const gpxUrl = `https://brouter.de/brouter?lonlats=${lonlats}&profile=${profile}&alternativeidx=0&format=gpx`;
     
     loadingSpinner.classList.remove('hidden');
@@ -806,7 +809,7 @@ async function analyzeRouteTraffic(id) {
         const data = await res.json();
         
         trafficLayerGroup.clearLayers();
-        let foundIncidents = 0;
+        let foundIncidents = [];
         
         if (data && data.incidents && typeof turf !== 'undefined') {
             const pts = route.layer.getLatLngs().map(p => [p.lng, p.lat]);
@@ -847,7 +850,7 @@ async function analyzeRouteTraffic(id) {
                 }
                 
                 if (intersects) {
-                    foundIncidents++;
+                    foundIncidents.push(inc);
                     let text = "<strong>⚠️ Traffic Incident on Route!</strong><br>";
                     if (inc.properties && inc.properties.events) {
                         text += inc.properties.events.map(e => e.description).join(', ');
@@ -873,8 +876,13 @@ async function analyzeRouteTraffic(id) {
             });
         }
         
-        if (foundIncidents > 0) {
-            showToast(`Found ${foundIncidents} traffic incident(s) on or very close to this route!`, 'warning');
+        if (foundIncidents.length > 0) {
+            showToast(`Found ${foundIncidents.length} traffic incident(s) on or very close to this route!`, 'warning');
+            
+            if (confirm(`⚠️ Found ${foundIncidents.length} traffic incident(s) on this route.\n\nWould you like to calculate a detour route around them?`)) {
+                generateDetour(route, foundIncidents);
+            }
+            
         } else {
             showToast("No traffic incidents found on this route.", 'success');
         }
@@ -900,6 +908,53 @@ window.removeImportedRoute = function(id) {
         }
     }
 };
+
+async function generateDetour(route, incidents) {
+    // 1. Generate nogo strings
+    let nogos = [];
+    incidents.forEach(inc => {
+        const coords = inc.geometry.coordinates;
+        if (inc.geometry.type === 'Point') {
+            nogos.push(`${coords[0]},${coords[1]},150`); // 150m radius
+        } else if (inc.geometry.type === 'LineString') {
+            const midIdx = Math.floor(coords.length / 2);
+            nogos.push(`${coords[midIdx][0]},${coords[midIdx][1]},250`); // Block middle
+        } else if (inc.geometry.type === 'MultiLineString') {
+            const line = coords[0];
+            const midIdx = Math.floor(line.length / 2);
+            nogos.push(`${line[midIdx][0]},${line[midIdx][1]},250`);
+        }
+    });
+    const nogoStr = nogos.join('|');
+    
+    // 2. Extract Anchor Points from imported route
+    const pts = route.layer.getLatLngs();
+    if (pts.length < 2) return;
+    
+    // Extract up to 5 waypoints to guide BRouter
+    const anchorPts = [];
+    const numAnchors = Math.min(pts.length, 5);
+    for(let i=0; i<numAnchors; i++) {
+        let idx = Math.floor((pts.length - 1) * (i / (numAnchors - 1)));
+        anchorPts.push(pts[idx]);
+    }
+    const lonlats = anchorPts.map(p => `${p.lng},${p.lat}`).join(';');
+    
+    // 3. Grey out the original route
+    route.layer.setStyle({color: '#6b7280', opacity: 0.5, dashArray: '5, 5'});
+    route.name = route.name + " (Original)";
+    updateImportedRoutesUI();
+    
+    // 4. Calculate Detour
+    showToast("Calculating smart detour...", "info");
+    
+    // Convert anchor points to global waypoints so they show on the map for the new route
+    waypoints = anchorPts.map(p => ({lat: p.lat, lng: p.lng}));
+    updateUI();
+    drawMarkers();
+    
+    await calculateAndDrawRoute(lonlats, nogoStr);
+}
 
 btnImportClear.addEventListener('click', () => {
     importedRoutesGroup.clearLayers();
