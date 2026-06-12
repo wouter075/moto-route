@@ -745,6 +745,7 @@ function updateImportedRoutesUI() {
             </div>
             <div style="display:flex; gap:4px;">
                 <button class="btn-toggle-route" data-id="${route.id}" title="Toggle Visibility" style="background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:16px; ${eyeStyle}">👁️</button>
+                <button class="btn-clean-route" data-id="${route.id}" title="Clean Track (Remove loops/spikes)" style="background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:16px;">✨</button>
                 <button class="btn-analyze-route" data-id="${route.id}" title="Analyze Traffic" style="background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:16px;">🚦</button>
                 <button class="btn-remove-route" data-id="${route.id}" title="Remove Route" style="background:none; border:none; cursor:pointer; color:var(--danger); font-size:18px;">&times;</button>
             </div>
@@ -779,6 +780,19 @@ function updateImportedRoutesUI() {
                     importedRoutesGroup.addLayer(route.layer);
                 }
                 updateImportedRoutesUI(); // Re-render to update eye icon opacity
+            }
+        });
+    });
+    
+    document.querySelectorAll('.btn-clean-route').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            const route = importedRoutes.find(r => r.id === id);
+            if (route) {
+                const oldPts = route.layer.getLatLngs();
+                const newPts = cleanTrack(oldPts);
+                route.layer.setLatLngs(newPts);
+                showToast(`Track cleaned! Reduced from ${oldPts.length} to ${newPts.length} points.`, 'success');
             }
         });
     });
@@ -909,6 +923,35 @@ window.removeImportedRoute = function(id) {
     }
 };
 
+function cleanTrack(points) {
+    if (points.length < 3) return points;
+    let cleaned = [points[0]];
+    let i = 0;
+    while (i < points.length - 1) {
+        let jumpTo = i + 1;
+        let pathDist = 0;
+        
+        for (let j = i + 1; j < points.length; j++) {
+            const p1 = turf.point([points[j-1].lng, points[j-1].lat]);
+            const p2 = turf.point([points[j].lng, points[j].lat]);
+            pathDist += turf.distance(p1, p2, {units: 'kilometers'});
+            
+            if (pathDist > 2.0) break; // Max loop/spike size: 2km
+            
+            const pStart = turf.point([points[i].lng, points[i].lat]);
+            const directDist = turf.distance(pStart, p2, {units: 'kilometers'});
+            
+            // Loop detected if returning to exact spot (<20m) after travelling a bit (>50m)
+            if (directDist < 0.02 && pathDist > 0.05) {
+                jumpTo = j;
+            }
+        }
+        cleaned.push(points[jumpTo]);
+        i = jumpTo;
+    }
+    return cleaned;
+}
+
 async function generateDetour(route, incidents) {
     // 1. Generate nogo strings
     let nogos = [];
@@ -933,8 +976,11 @@ async function generateDetour(route, incidents) {
     const nogoStr = nogos.join('|');
     
     // 2. Extract Anchor Points from imported route
-    const pts = route.layer.getLatLngs();
-    if (pts.length < 2) return;
+    const rawPts = route.layer.getLatLngs();
+    if (rawPts.length < 2) return;
+    
+    // Auto-clean the track to ensure BRouter anchors don't get trapped in dead-end spikes
+    const pts = cleanTrack(rawPts);
     
     const routeLine = turf.lineString(pts.map(p => [p.lng, p.lat]));
     const routeLength = turf.length(routeLine, {units: 'kilometers'});
