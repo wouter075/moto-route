@@ -912,17 +912,22 @@ window.removeImportedRoute = function(id) {
 async function generateDetour(route, incidents) {
     // 1. Generate nogo strings
     let nogos = [];
+    let nogoPointsForDistance = []; // For filtering out anchors inside nogos
+    
     incidents.forEach(inc => {
         const coords = inc.geometry.coordinates;
         if (inc.geometry.type === 'Point') {
             nogos.push(`${coords[0]},${coords[1]},150`); // 150m radius
+            nogoPointsForDistance.push({pt: turf.point(coords), rad: 0.15});
         } else if (inc.geometry.type === 'LineString') {
             const midIdx = Math.floor(coords.length / 2);
             nogos.push(`${coords[midIdx][0]},${coords[midIdx][1]},250`); // Block middle
+            nogoPointsForDistance.push({pt: turf.point(coords[midIdx]), rad: 0.25});
         } else if (inc.geometry.type === 'MultiLineString') {
             const line = coords[0];
             const midIdx = Math.floor(line.length / 2);
             nogos.push(`${line[midIdx][0]},${line[midIdx][1]},250`);
+            nogoPointsForDistance.push({pt: turf.point(line[midIdx]), rad: 0.25});
         }
     });
     const nogoStr = nogos.join('|');
@@ -931,12 +936,28 @@ async function generateDetour(route, incidents) {
     const pts = route.layer.getLatLngs();
     if (pts.length < 2) return;
     
-    // Extract up to 5 waypoints to guide BRouter
+    // Extract up to 40 waypoints to guide BRouter TIGHTLY to the original track
     const anchorPts = [];
-    const numAnchors = Math.min(pts.length, 5);
+    const numAnchors = Math.min(pts.length, 40);
+    
     for(let i=0; i<numAnchors; i++) {
         let idx = Math.floor((pts.length - 1) * (i / (numAnchors - 1)));
-        anchorPts.push(pts[idx]);
+        let candidate = pts[idx];
+        
+        // Skip this anchor point if it falls inside a traffic zone (prevents BRouter from trying to enter the blocked road)
+        let isInsideNogo = false;
+        let turfPt = turf.point([candidate.lng, candidate.lat]);
+        for(let n of nogoPointsForDistance) {
+            // Buffer it by an extra 100m to ensure BRouter has space to maneuver
+            if (turf.distance(turfPt, n.pt, {units: 'kilometers'}) < n.rad + 0.1) { 
+                isInsideNogo = true;
+                break;
+            }
+        }
+        
+        if (!isInsideNogo) {
+            anchorPts.push(candidate);
+        }
     }
     const lonlats = anchorPts.map(p => `${p.lng},${p.lat}`).join(';');
     
