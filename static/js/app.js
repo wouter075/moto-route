@@ -42,6 +42,39 @@ let importedRoutes = [];
 let trafficLayerGroup = L.layerGroup().addTo(map);
 let showingTraffic = false;
 
+// Toast Notifications
+function showToast(message, type = 'info', duration = 5000) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    const msgDiv = document.createElement('div');
+    msgDiv.innerHTML = message;
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'toast-close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.onclick = () => {
+        toast.style.animation = 'fadeOut 0.3s ease forwards';
+        setTimeout(() => toast.remove(), 300);
+    };
+    
+    toast.appendChild(msgDiv);
+    toast.appendChild(closeBtn);
+    container.appendChild(toast);
+    
+    if (duration > 0) {
+        setTimeout(() => {
+            if (toast.parentElement) {
+                toast.style.animation = 'fadeOut 0.3s ease forwards';
+                setTimeout(() => toast.remove(), 300);
+            }
+        }, duration);
+    }
+}
+
 // DOM Elements
 const waypointsListEl = document.getElementById('waypoints-list');
 const btnCalculate = document.getElementById('btn-calculate');
@@ -377,8 +410,8 @@ async function calculateAndDrawRoute(lonlats) {
         updateExportFilename();
         
     } catch (err) {
-        console.error(err);
-        errorMessage.classList.remove('hidden');
+        console.error('Route calculation failed', err);
+        showToast('Route calculation failed. Please try again.', 'error');
     } finally {
         loadingSpinner.classList.add('hidden');
         btnCalculate.disabled = false;
@@ -448,7 +481,7 @@ async function performSearch(query) {
                 addWaypoint(lat, lng);
             }
         } else {
-            alert('Location not found');
+            showToast('Location not found', 'error');
         }
     } catch (err) {
         console.error('Search error', err);
@@ -529,12 +562,12 @@ async function fetchTraffic() {
 btnRoundtrip.addEventListener('click', () => {
     const km = parseFloat(roundtripKm.value);
     if (!km || km < 10) {
-        alert('Please enter a valid distance (min 10km).');
+        showToast('Please enter a valid distance (min 10km).', 'warning');
         return;
     }
     
     if (waypoints.length === 0) {
-        alert('Please set a starting point first (Search or click the map).');
+        showToast('Please set a starting point first (Search or click the map).', 'warning');
         return;
     }
     
@@ -627,6 +660,8 @@ function parseGPX(xmlText, filename) {
     if (importedRoutesGroup.getLayers().length > 0) {
         map.fitBounds(importedRoutesGroup.getBounds(), { padding: [50, 50] });
         routeStats.classList.remove('hidden'); // Show export button
+    } else {
+        showToast("No route data found in this file.", 'warning');
     }
 }
 
@@ -819,14 +854,14 @@ async function analyzeRouteTraffic(id) {
         }
         
         if (foundIncidents > 0) {
-            alert(`⚠️ Found ${foundIncidents} traffic incident(s) on or very close to this route!`);
+            showToast(`Found ${foundIncidents} traffic incident(s) on or very close to this route!`, 'warning');
         } else {
-            alert("✅ No traffic incidents found on this route.");
+            showToast("No traffic incidents found on this route.", 'success');
         }
         
     } catch(err) {
         console.error(err);
-        alert(`Failed to analyze traffic: ${err.message}`);
+        showToast(`Failed to analyze traffic: ${err.message}`, 'error');
     } finally {
         if(originalBtn) originalBtn.innerText = '🚦';
     }
