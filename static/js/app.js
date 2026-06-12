@@ -481,7 +481,8 @@ map.on('moveend', () => {
 async function fetchTraffic() {
     const bounds = map.getBounds();
     const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
-    const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields={incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}&language=en-GB`;
+    const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}');
+    const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields=${fields}&language=en-GB`;
     
     try {
         const res = await fetch(url);
@@ -742,7 +743,8 @@ async function analyzeRouteTraffic(id) {
     try {
         const bounds = route.layer.getBounds();
         const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
-        const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields={incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}&language=en-GB`;
+        const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}');
+        const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields=${fields}&language=en-GB`;
         
         const res = await fetch(url);
         if (!res.ok) throw new Error("Traffic fetch failed");
@@ -824,7 +826,7 @@ async function analyzeRouteTraffic(id) {
         
     } catch(err) {
         console.error(err);
-        alert("Failed to analyze traffic.");
+        alert(`Failed to analyze traffic: ${err.message}`);
     } finally {
         if(originalBtn) originalBtn.innerText = '🚦';
     }
