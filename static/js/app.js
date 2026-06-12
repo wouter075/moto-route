@@ -936,9 +936,13 @@ async function generateDetour(route, incidents) {
     const pts = route.layer.getLatLngs();
     if (pts.length < 2) return;
     
-    // Extract up to 40 waypoints to guide BRouter TIGHTLY to the original track
+    const routeLine = turf.lineString(pts.map(p => [p.lng, p.lat]));
+    const routeLength = turf.length(routeLine, {units: 'kilometers'});
+    
+    // Calculate anchors based on length: ~1 anchor every 2 km, max 50 points (BRouter URL limit)
+    const numAnchors = Math.min(50, Math.max(2, Math.floor(routeLength / 2)));
+    
     const anchorPts = [];
-    const numAnchors = Math.min(pts.length, 40);
     
     for(let i=0; i<numAnchors; i++) {
         let idx = Math.floor((pts.length - 1) * (i / (numAnchors - 1)));
@@ -968,11 +972,6 @@ async function generateDetour(route, incidents) {
     
     // 4. Calculate Detour
     showToast("Calculating smart detour...", "info");
-    
-    // Convert anchor points to global waypoints so they show on the map for the new route
-    waypoints = anchorPts.map(p => ({lat: p.lat, lng: p.lng}));
-    updateUI();
-    drawMarkers();
     
     await calculateAndDrawRoute(lonlats, nogoStr);
 }
