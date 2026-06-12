@@ -39,6 +39,8 @@ let routeLayer = null;
 let markers = [];
 let importedRoutesGroup = L.featureGroup().addTo(map);
 let importedRoutes = [];
+let trafficLayerGroup = L.layerGroup().addTo(map);
+let showingTraffic = false;
 
 // DOM Elements
 const waypointsListEl = document.getElementById('waypoints-list');
@@ -54,6 +56,8 @@ const selectProfile = document.getElementById('route-profile');
 
 const searchInput = document.getElementById('search-input');
 const btnSearch = document.getElementById('btn-search');
+
+const btnTraffic = document.getElementById('btn-traffic');
 
 const rtSearchInput = document.getElementById('rt-search-input');
 const btnRtSearch = document.getElementById('btn-rt-search');
@@ -455,6 +459,70 @@ async function performSearch(query) {
 
 btnSearch.addEventListener('click', () => performSearch(searchInput.value));
 btnRtSearch.addEventListener('click', () => performSearch(rtSearchInput.value));
+
+// Traffic Incidents
+btnTraffic.addEventListener('click', () => {
+    showingTraffic = !showingTraffic;
+    if (showingTraffic) {
+        btnTraffic.classList.replace('btn-secondary', 'btn-primary');
+        btnTraffic.innerText = 'Hide Traffic Incidents';
+        fetchTraffic();
+    } else {
+        btnTraffic.classList.replace('btn-primary', 'btn-secondary');
+        btnTraffic.innerText = 'Show Traffic Incidents';
+        trafficLayerGroup.clearLayers();
+    }
+});
+
+map.on('moveend', () => {
+    if (showingTraffic) fetchTraffic();
+});
+
+async function fetchTraffic() {
+    const bounds = map.getBounds();
+    const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+    const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields={incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}&language=en-GB`;
+    
+    try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Traffic API error");
+        const data = await res.json();
+        
+        trafficLayerGroup.clearLayers();
+        
+        if (data && data.incidents) {
+            data.incidents.forEach(inc => {
+                let coords = inc.geometry.coordinates;
+                let text = "<strong>Traffic Incident</strong><br>";
+                if (inc.properties && inc.properties.events) {
+                    text += inc.properties.events.map(e => e.description).join(', ');
+                }
+                if (inc.properties && inc.properties.magnitudeOfDelay) {
+                    text += `<br>Delay: ${inc.properties.magnitudeOfDelay}s`;
+                }
+                
+                if (inc.geometry.type === 'Point') {
+                    L.marker([coords[1], coords[0]], {
+                        icon: L.divIcon({
+                            html: '<div style="font-size:20px; background:white; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.3);">🚧</div>',
+                            className: 'traffic-icon',
+                            iconSize: [24,24],
+                            iconAnchor: [12,12]
+                        })
+                    }).bindPopup(text).addTo(trafficLayerGroup);
+                } else if (inc.geometry.type === 'LineString') {
+                    let latlngs = coords.map(c => [c[1], c[0]]);
+                    L.polyline(latlngs, {color: 'red', weight: 4, dashArray: '5, 5'}).bindPopup(text).addTo(trafficLayerGroup);
+                } else if (inc.geometry.type === 'MultiLineString') {
+                    let latlngs = coords.map(line => line.map(c => [c[1], c[0]]));
+                    L.polyline(latlngs, {color: 'red', weight: 4, dashArray: '5, 5'}).bindPopup(text).addTo(trafficLayerGroup);
+                }
+            });
+        }
+    } catch (err) {
+        console.error("Traffic fetch error:", err);
+    }
+}
 
 // Round Trip Generator
 btnRoundtrip.addEventListener('click', () => {

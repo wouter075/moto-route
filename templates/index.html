@@ -66,6 +66,10 @@
                     <button id="btn-calculate" class="btn btn-primary" disabled>Calculate Route</button>
                     <button id="btn-clear" class="btn btn-secondary">Clear Map</button>
                 </div>
+                
+                <div class="actions" style="margin-top: 10px;">
+                    <button id="btn-traffic" class="btn btn-secondary" style="width:100%;">Show Traffic Incidents</button>
+                </div>
             </div>
             
             <div id="tab-roundtrip" class="tab-pane">
@@ -164,6 +168,11 @@
      
     <!-- Turf.js for Geometry Simplification -->
     <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    
+    <!-- API Keys -->
+    <script>
+        const TOMTOM_API_KEY = "ddzqtBdFhEQ8BDFLSVovNZEZjUp9Eltd";
+    </script>
      
     <!-- App JS -->
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
