@@ -732,14 +732,18 @@ function updateImportedRoutesUI() {
         div.style.border = '1px solid var(--border)';
         div.style.borderRadius = '4px';
         div.style.color = 'var(--text-main)';
+        
+        const eyeStyle = route.hidden ? 'opacity:0.5;' : 'opacity:1;';
+        
         div.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
                 <div style="width:16px; height:16px; border-radius:50%; background-color:${route.color}; flex-shrink:0;"></div>
                 <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${route.name}">${route.name}</span>
             </div>
             <div style="display:flex; gap:4px;">
+                <button class="btn-toggle-route" data-id="${route.id}" title="Toggle Visibility" style="background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:16px; ${eyeStyle}">👁️</button>
                 <button class="btn-analyze-route" data-id="${route.id}" title="Analyze Traffic" style="background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:16px;">🚦</button>
-                <button class="btn-remove-route" data-id="${route.id}" style="background:none; border:none; cursor:pointer; color:var(--danger); font-size:18px;">&times;</button>
+                <button class="btn-remove-route" data-id="${route.id}" title="Remove Route" style="background:none; border:none; cursor:pointer; color:var(--danger); font-size:18px;">&times;</button>
             </div>
         `;
         importedRoutesList.appendChild(div);
@@ -756,6 +760,22 @@ function updateImportedRoutesUI() {
                 if (importedRoutes.length === 0 && !routeLayer) {
                     routeStats.classList.add('hidden');
                 }
+            }
+        });
+    });
+    
+    document.querySelectorAll('.btn-toggle-route').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            const route = importedRoutes.find(r => r.id === id);
+            if (route) {
+                route.hidden = !route.hidden;
+                if (route.hidden) {
+                    importedRoutesGroup.removeLayer(route.layer);
+                } else {
+                    importedRoutesGroup.addLayer(route.layer);
+                }
+                updateImportedRoutesUI(); // Re-render to update eye icon opacity
             }
         });
     });
@@ -926,6 +946,7 @@ btnExportGpx.addEventListener('click', function(e) {
 
     // 2. Export Imported/Edited Routes
     importedRoutes.forEach(r => {
+        if (r.hidden) return; // Skip hidden routes
         gpxContent += `  <trk>\n    <name>${r.name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</name>\n    <trkseg>\n`;
         
         // Geoman edited lines might be multiple coordinates arrays or slightly different structure
