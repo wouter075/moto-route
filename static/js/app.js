@@ -696,16 +696,138 @@ function updateImportedRoutesUI() {
         div.style.border = '1px solid var(--border)';
         div.style.borderRadius = '4px';
         div.style.color = 'var(--text-main)';
-        
         div.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
                 <div style="width:16px; height:16px; border-radius:50%; background-color:${route.color}; flex-shrink:0;"></div>
                 <span style="font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${route.name}">${route.name}</span>
             </div>
-            <button onclick="removeImportedRoute(${route.id})" style="background:none; border:none; color:var(--danger, #ef4444); cursor:pointer; font-weight:bold; font-size:16px;">&times;</button>
+            <div style="display:flex; gap:4px;">
+                <button class="btn-analyze-route" data-id="${route.id}" title="Analyze Traffic" style="background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:16px;">🚦</button>
+                <button class="btn-remove-route" data-id="${route.id}" style="background:none; border:none; cursor:pointer; color:var(--danger); font-size:18px;">&times;</button>
+            </div>
         `;
         importedRoutesList.appendChild(div);
     });
+    
+    document.querySelectorAll('.btn-remove-route').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            const index = importedRoutes.findIndex(r => r.id === id);
+            if (index > -1) {
+                importedRoutesGroup.removeLayer(importedRoutes[index].layer);
+                importedRoutes.splice(index, 1);
+                updateImportedRoutesUI();
+                if (importedRoutes.length === 0 && !routeLayer) {
+                    routeStats.classList.add('hidden');
+                }
+            }
+        });
+    });
+    
+    document.querySelectorAll('.btn-analyze-route').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = parseInt(e.target.dataset.id);
+            await analyzeRouteTraffic(id);
+        });
+    });
+}
+
+async function analyzeRouteTraffic(id) {
+    const route = importedRoutes.find(r => r.id === id);
+    if (!route) return;
+    
+    const originalBtn = document.querySelector(`.btn-analyze-route[data-id="${id}"]`);
+    if(originalBtn) originalBtn.innerText = '⏳';
+    
+    try {
+        const bounds = route.layer.getBounds();
+        const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+        const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields={incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}&language=en-GB`;
+        
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Traffic fetch failed");
+        const data = await res.json();
+        
+        trafficLayerGroup.clearLayers();
+        let foundIncidents = 0;
+        
+        if (data && data.incidents && typeof turf !== 'undefined') {
+            const pts = route.layer.getLatLngs().map(p => [p.lng, p.lat]);
+            if(pts.length < 2) return;
+            const routeLine = turf.lineString(pts);
+            
+            data.incidents.forEach(inc => {
+                let coords = inc.geometry.coordinates;
+                let incidentGeo;
+                
+                if (inc.geometry.type === 'Point') {
+                    incidentGeo = turf.point(coords);
+                } else if (inc.geometry.type === 'LineString') {
+                    incidentGeo = turf.lineString(coords);
+                } else if (inc.geometry.type === 'MultiLineString') {
+                    incidentGeo = turf.multiLineString(coords);
+                }
+                
+                if (!incidentGeo) return;
+                
+                let intersects = false;
+                
+                if (inc.geometry.type === 'Point') {
+                    const dist = turf.pointToLineDistance(incidentGeo, routeLine, {units: 'kilometers'});
+                    if (dist < 0.05) intersects = true; // 50 meters
+                } else {
+                    if (turf.booleanIntersects(incidentGeo, routeLine)) {
+                        intersects = true;
+                    } else {
+                        const points = turf.explode(incidentGeo);
+                        for(let pt of points.features) {
+                            if (turf.pointToLineDistance(pt, routeLine, {units: 'kilometers'}) < 0.05) {
+                                intersects = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (intersects) {
+                    foundIncidents++;
+                    let text = "<strong>⚠️ Traffic Incident on Route!</strong><br>";
+                    if (inc.properties && inc.properties.events) {
+                        text += inc.properties.events.map(e => e.description).join(', ');
+                    }
+                    if (inc.properties && inc.properties.magnitudeOfDelay) {
+                        text += `<br>Delay: ${inc.properties.magnitudeOfDelay}s`;
+                    }
+                    
+                    if (inc.geometry.type === 'Point') {
+                        L.marker([coords[1], coords[0]], {
+                            icon: L.divIcon({
+                                html: '<div style="font-size:24px; background:yellow; border:2px solid red; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 10px red;">🚧</div>',
+                                className: 'traffic-icon',
+                                iconSize: [32,32],
+                                iconAnchor: [16,16]
+                            })
+                        }).addTo(trafficLayerGroup).bindPopup(text).openPopup();
+                    } else {
+                        let latlngs = inc.geometry.type === 'LineString' ? coords.map(c => [c[1], c[0]]) : coords.map(line => line.map(c => [c[1], c[0]]));
+                        L.polyline(latlngs, {color: 'red', weight: 8, dashArray: '10, 10'}).addTo(trafficLayerGroup).bindPopup(text).openPopup();
+                    }
+                }
+            });
+        }
+        
+        if (foundIncidents > 0) {
+            alert(`⚠️ Found ${foundIncidents} traffic incident(s) on or very close to this route!`);
+        } else {
+            alert("✅ No traffic incidents found on this route.");
+        }
+        
+    } catch(err) {
+        console.error(err);
+        alert("Failed to analyze traffic.");
+    } finally {
+        if(originalBtn) originalBtn.innerText = '🚦';
+    }
 }
 
 window.removeImportedRoute = function(id) {
