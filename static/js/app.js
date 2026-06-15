@@ -193,10 +193,18 @@ map.on('click', function(e) {
     addWaypoint(lat, lng);
 });
 
-function addWaypoint(lat, lng) {
-    waypoints.push({ lat, lng });
+function addWaypoint(lat, lng, name = null) {
+    const wp = { lat, lng, name: name || 'Loading location...' };
+    waypoints.push(wp);
     updateUI();
     drawMarkers();
+    
+    if (!name) {
+        getCityName(lat, lng).then(fetchedName => {
+            wp.name = fetchedName;
+            updateUI();
+        });
+    }
     
     if (waypoints.length >= 2) {
         btnCalculate.disabled = false;
@@ -244,7 +252,13 @@ function drawMarkers() {
         // Handle dragging to move waypoints
         marker.on('dragend', function(event) {
             const position = marker.getLatLng();
-            waypoints[index] = { lat: position.lat, lng: position.lng };
+            waypoints[index] = { lat: position.lat, lng: position.lng, name: 'Loading location...' };
+            
+            getCityName(position.lat, position.lng).then(fetchedName => {
+                waypoints[index].name = fetchedName;
+                updateUI();
+            });
+            
             updateUI();
             drawMarkers();
             if (waypoints.length >= 2) {
@@ -351,7 +365,10 @@ function updateUI() {
                 <span style="font-size:10px;">&#9776;</span>
             </div>
             <div class="waypoint-marker ${cName}">${label}</div>
-            <div class="waypoint-coord">${wp.lat.toFixed(4)}, ${wp.lng.toFixed(4)}</div>
+            <div style="display:flex; flex-direction:column; flex-grow:1; margin-left:8px; overflow:hidden;">
+                <span class="waypoint-name" style="font-size:13px; font-weight:600; color:var(--text-main); white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${wp.name || 'Location'}</span>
+                <span class="waypoint-coord" style="font-size:11px; color:var(--text-muted); margin-top:2px; margin-left:0;">${wp.lat.toFixed(4)}, ${wp.lng.toFixed(4)}</span>
+            </div>
             <button onclick="removeWaypoint(${index})" style="position:absolute; right:8px; background:none; border:none; color:var(--danger); cursor:pointer; font-size:18px; font-weight:bold;">&times;</button>
         `;
         waypointsListEl.appendChild(div);
@@ -539,7 +556,8 @@ async function performSearch(query) {
             
             // Optionally add it as a waypoint if it's the first
             if (waypoints.length === 0) {
-                addWaypoint(lat, lng);
+                const displayName = data[0].display_name.split(',')[0].trim();
+                addWaypoint(lat, lng, displayName);
             }
         } else {
             showToast('Location not found', 'error');
