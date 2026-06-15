@@ -1,15 +1,10 @@
 // MotoRoute Application Logic
 
 // Initialize Map
-// Start centered in Europe as a default, users can pan
+// Start centered in Netherlands as a default, users can pan
 const map = L.map('map', {
-    zoomControl: false // We will add it to the bottom right
-}).setView([46.8182, 8.2275], 6); // Centered on Switzerland
-
-// Add Zoom control to bottom right
-L.control.zoom({
-    position: 'bottomright'
-}).addTo(map);
+    zoomControl: false 
+}).setView([52.1326, 5.2913], 7); // Centered on Netherlands
 
 // Initialize Leaflet-Geoman controls
 map.pm.addControls({
@@ -383,16 +378,18 @@ btnClear.addEventListener('click', clearAll);
 btnRtClear.addEventListener('click', clearAll);
 
 // Calculate Route via BRouter
-async function calculateAndDrawRoute(lonlats, nogoStr = '') {
+async function calculateAndDrawRoute(lonlats, nogoStr = '', silentError = false) {
     const profile = document.getElementById('route-profile').value;
     let apiUrl = `https://brouter.de/brouter?lonlats=${lonlats}&profile=${profile}&alternativeidx=0&format=geojson`;
     if (nogoStr) {
         apiUrl += `&nogo=${nogoStr}`;
     }
-    const gpxUrl = `https://brouter.de/brouter?lonlats=${lonlats}&profile=${profile}&alternativeidx=0&format=gpx`;
     
-    loadingSpinner.classList.remove('hidden');
-    errorMessage.classList.add('hidden');
+    if (!silentError) {
+        loadingSpinner.classList.remove('hidden');
+        errorMessage.classList.add('hidden');
+    }
+    
     routeStats.classList.add('hidden');
     btnCalculate.disabled = true;
     
@@ -465,11 +462,17 @@ async function calculateAndDrawRoute(lonlats, nogoStr = '') {
         // Update Export Filename asynchronously
         updateExportFilename();
         
+        return true; // Success
     } catch (err) {
         console.error('Route calculation failed', err);
-        showToast('Route calculation failed. Please try again.', 'error');
+        if (!silentError) {
+            showToast('Route calculation failed. Please try again.', 'error');
+        }
+        return false; // Failure
     } finally {
-        loadingSpinner.classList.add('hidden');
+        if (!silentError) {
+            loadingSpinner.classList.add('hidden');
+        }
         btnCalculate.disabled = false;
     }
 } // Extracted to reuse logic
@@ -561,7 +564,7 @@ map.on('click', (e) => {
 });
 
 // Round Trip Generator
-btnRoundtrip.addEventListener('click', () => {
+btnRoundtrip.addEventListener('click', async () => {
     const km = parseFloat(roundtripKm.value);
     if (!km || km < 10) {
         showToast('Please enter a valid distance (min 10km).', 'warning');
@@ -573,52 +576,52 @@ btnRoundtrip.addEventListener('click', () => {
         return;
     }
     
-    // Clear existing waypoints except the first one
     const startWp = waypoints[0];
-    waypoints = [startWp];
-    updateUI();
-    drawMarkers();
     
-    // Algorithm to generate circular points
-    // 1. Calculate rough radius. Detour factor ~1.3
-    // We use 6 points now for a rounder hexagon shape.
-    // Hexagon perimeter = 6 * R. 
-    // Target circumference = km / 1.3
-    // R = (km / 1.3) / 6
-    const radiusKm = (km / 1.3) / 6;
+    loadingSpinner.classList.remove('hidden');
     
-    // Earth radius in km
-    const R = 6371; 
+    let success = false;
+    let attempts = 0;
+    const maxAttempts = 5;
     
-    // Pick a random starting angle
-    const startAngle = Math.random() * 360;
-    
-    // Generate 6 points at 60 degree intervals
-    for (let i = 0; i < 6; i++) {
-        const bearing = (startAngle + i * 60) * (Math.PI / 180); // radians
-        const d = radiusKm;
+    while (!success && attempts < maxAttempts) {
+        attempts++;
+        waypoints = [startWp];
         
-        const lat1 = startWp.lat * (Math.PI / 180);
-        const lon1 = startWp.lng * (Math.PI / 180);
+        const radiusKm = (km / 1.3) / 6;
+        const R = 6371; 
+        const startAngle = Math.random() * 360; // Random angle changes every attempt!
         
-        const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d/R) + Math.cos(lat1)*Math.sin(d/R)*Math.cos(bearing));
-        const lon2 = lon1 + Math.atan2(Math.sin(bearing)*Math.sin(d/R)*Math.cos(lat1), Math.cos(d/R)-Math.sin(lat1)*Math.sin(lat2));
+        for (let i = 0; i < 6; i++) {
+            const bearing = (startAngle + i * 60) * (Math.PI / 180); 
+            const d = radiusKm;
+            
+            const lat1 = startWp.lat * (Math.PI / 180);
+            const lon1 = startWp.lng * (Math.PI / 180);
+            
+            const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d/R) + Math.cos(lat1)*Math.sin(d/R)*Math.cos(bearing));
+            const lon2 = lon1 + Math.atan2(Math.sin(bearing)*Math.sin(d/R)*Math.cos(lat1), Math.cos(d/R)-Math.sin(lat1)*Math.sin(lat2));
+            
+            waypoints.push({lat: lat2 * (180 / Math.PI), lng: lon2 * (180 / Math.PI)});
+        }
         
-        const newLat = lat2 * (180 / Math.PI);
-        const newLng = lon2 * (180 / Math.PI);
+        waypoints.push(startWp);
         
-        waypoints.push({lat: newLat, lng: newLng});
+        const lonlats = waypoints.map(wp => `${wp.lng},${wp.lat}`).join(';');
+        success = await calculateAndDrawRoute(lonlats, '', true); // silentError = true
     }
     
-    // Add start waypoint again to close the loop
-    waypoints.push(startWp);
+    loadingSpinner.classList.add('hidden');
     
-    updateUI();
-    drawMarkers();
-    
-    // Auto-calculate the route
-    const lonlats = waypoints.map(wp => `${wp.lng},${wp.lat}`).join(';');
-    calculateAndDrawRoute(lonlats);
+    if (success) {
+        updateUI();
+        drawMarkers();
+    } else {
+        waypoints = [startWp]; // Reset to just start point
+        updateUI();
+        drawMarkers();
+        showToast('Could not find a valid round trip route from this location. Please try somewhere else or adjust distance.', 'error');
+    }
 });
 
 // --------------------------------------------------------
