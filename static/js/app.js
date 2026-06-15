@@ -500,13 +500,13 @@ async function getCityName(lat, lng) {
     try {
         const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
         const data = await res.json();
-        if (data && data.address) {
-            return data.address.city || data.address.town || data.address.village || data.address.county || 'location';
+        if (data && data.display_name) {
+            return data.display_name.split(',')[0].trim();
         }
     } catch (err) {
         console.error('Reverse geocode error', err);
     }
-    return 'location';
+    return 'Location';
 }
 
 async function updateExportFilename() {
