@@ -28,9 +28,12 @@
         <aside class="sidebar" id="sidebar">
             <button id="sidebar-toggle" class="sidebar-toggle">❮</button>
             <div class="sidebar-content">
-                <header>
-                    <h1>MotoRoute</h1>
-                    <p>Plan your perfect ride.</p>
+                <header style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                        <h1>MotoRoute</h1>
+                        <p>Plan your perfect ride.</p>
+                    </div>
+                    <button id="btn-about" class="btn btn-secondary" style="padding: 4px 8px; font-size:12px; margin-top:4px;">About</button>
                 </header>
                 
                 <div class="control-group">
@@ -97,18 +100,18 @@
             </div>
             
             <div id="tab-import" class="tab-pane">
-                <div class="control-group">
-                    <label>Upload GPX File</label>
-                    <input type="file" id="gpx-upload" accept=".gpx" class="custom-input" style="padding: 8px;">
-                </div>
-                
-                <div class="control-group" style="margin-top: 8px;">
+                <div class="control-group" style="margin-top: 8px; margin-bottom: 12px;">
                     <label style="display:flex; justify-content:space-between;">
                         <span>Simplify Route</span>
                         <span id="simplify-val" style="color:var(--primary);">Medium</span>
                     </label>
                     <input type="range" id="simplify-slider" min="0" max="3" value="2" style="width:100%; cursor:pointer;">
-                    <p style="font-size:12px; color:var(--text-muted); margin-top:2px;">Reduces points so the route is easier to edit.</p>
+                    <p style="font-size:12px; color:var(--text-muted); margin-top:2px;">Slide this to adjust how many points are loaded.</p>
+                </div>
+
+                <div class="control-group">
+                    <label>Upload GPX File</label>
+                    <input type="file" id="gpx-upload" accept=".gpx" class="custom-input" style="padding: 8px;">
                 </div>
                 
                 <div class="control-group instructions" style="margin-top: 8px;">
@@ -156,7 +159,24 @@
         </aside>
         
         <!-- Map Container -->
-        <main id="map"></main>
+    </div>
+
+    <!-- About Modal -->
+    <div id="about-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-modal" id="close-about">&times;</span>
+            <h2>About MotoRoute</h2>
+            <p style="margin-top:10px;">MotoRoute is a premium, open-source motorcycle routing tool designed to help you plan the perfect ride.</p>
+            <h3>Techniques Used</h3>
+            <ul>
+                <li><strong>Core Logic:</strong> 100% Client-side JavaScript. No backend server is required! Hosted entirely on GitHub Pages.</li>
+                <li><strong>Routing Engine:</strong> BRouter API, powered by OpenStreetMap data.</li>
+                <li><strong>Map Rendering:</strong> Leaflet.js with Thunderforest maps.</li>
+                <li><strong>Traffic Data:</strong> Live integration with the TomTom Traffic API.</li>
+                <li><strong>Spatial Math:</strong> Turf.js for complex route simplification, intersection calculations, and dead-end/loop removal.</li>
+            </ul>
+            <p style="margin-top:20px; font-size:12px; color:var(--text-muted);">Built with ❤️ in the Netherlands.</p>
+        </div>
     </div>
 
     <!-- Leaflet JS -->

@@ -96,6 +96,10 @@ const rtSearchInput = document.getElementById('rt-search-input');
 const btnRtSearch = document.getElementById('btn-rt-search');
 const btnRtClear = document.getElementById('btn-rt-clear');
 
+const btnAbout = document.getElementById('btn-about');
+const aboutModal = document.getElementById('about-modal');
+const closeAbout = document.getElementById('close-about');
+
 const roundtripKm = document.getElementById('roundtrip-km');
 const btnRoundtrip = document.getElementById('btn-roundtrip');
 
@@ -109,7 +113,40 @@ const simplifyLabels = ['Off', 'Low', 'Medium', 'High'];
 const simplifyTolerances = [0, 0.0005, 0.002, 0.008]; // Tolerance in degrees
 
 simplifySlider.addEventListener('input', (e) => {
-    simplifyVal.innerText = simplifyLabels[e.target.value];
+    const val = e.target.value;
+    if(val === "0") simplifyVal.innerText = "Off";
+    if(val === "1") simplifyVal.innerText = "Low";
+    if(val === "2") simplifyVal.innerText = "Medium";
+    if(val === "3") simplifyVal.innerText = "High";
+});
+
+simplifySlider.addEventListener('change', () => {
+    const level = parseInt(simplifySlider.value);
+    
+    let count = 0;
+    importedRoutes.forEach(route => {
+        if (route.rawPts && route.rawPts.length > 0) {
+            let pts = [...route.rawPts];
+            if (level > 0 && typeof turf !== 'undefined') {
+                try {
+                    const lineString = turf.lineString(pts.map(p => [p[1], p[0]]));
+                    const simplified = turf.simplify(lineString, {
+                        tolerance: simplifyTolerances[level], 
+                        highQuality: true
+                    });
+                    pts = simplified.geometry.coordinates.map(p => [p[1], p[0]]);
+                } catch (err) {
+                    console.error("Simplification error", err);
+                }
+            }
+            route.layer.setLatLngs(pts);
+            count++;
+        }
+    });
+    
+    if (count > 0) {
+        showToast(`Re-simplified ${count} imported route(s) to ${simplifyVal.innerText} level.`, "info");
+    }
 });
 
 const exportFilenameInput = document.getElementById('export-filename');
@@ -124,6 +161,23 @@ const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebar-toggle');
 sidebarToggle.addEventListener('click', () => {
     sidebar.classList.toggle('collapsed');
+    if (sidebar.classList.contains('collapsed')) {
+        setTimeout(() => map.invalidateSize(), 300);
+    }
+});
+
+btnAbout.addEventListener('click', () => {
+    aboutModal.classList.remove('hidden');
+});
+
+closeAbout.addEventListener('click', () => {
+    aboutModal.classList.add('hidden');
+});
+
+window.addEventListener('click', (e) => {
+    if (e.target === aboutModal) {
+        aboutModal.classList.add('hidden');
+    }
 });
 
 const tabBtns = document.querySelectorAll('.tab-btn');
@@ -681,6 +735,8 @@ function extractLinePoints(element, name) {
     });
     
     if (pts.length > 1) {
+        const rawPts = [...pts]; // Save original unsimplified points
+        
         // Apply Simplification if enabled
         const level = parseInt(simplifySlider.value);
         if (level > 0 && typeof turf !== 'undefined') {
@@ -716,7 +772,7 @@ function extractLinePoints(element, name) {
         });
         
         importedRoutesGroup.addLayer(polyline);
-        const routeObj = { id: L.stamp(polyline), name, color, layer: polyline };
+        const routeObj = { id: L.stamp(polyline), name, color, layer: polyline, rawPts };
         importedRoutes.push(routeObj);
         
         updateImportedRoutesUI();
