@@ -1051,7 +1051,16 @@ if (btnAnalyzeActiveRoute) {
             let foundIncidents = [];
             
             if (data && data.incidents && typeof turf !== 'undefined') {
-                const pts = routeLayer.getLatLngs().map(p => [p.lng, p.lat]);
+                let rawPts = [];
+                routeLayer.eachLayer(layer => {
+                    if (layer.getLatLngs) {
+                        const lls = layer.getLatLngs();
+                        if (lls.length > 0 && Array.isArray(lls[0])) lls.forEach(arr => rawPts.push(...arr));
+                        else rawPts.push(...lls);
+                    }
+                });
+                
+                const pts = rawPts.map(p => [p.lng, p.lat]);
                 if(pts.length < 2) return;
                 const routeLine = turf.lineString(pts);
                 
@@ -1155,7 +1164,15 @@ async function generateDetourForActiveRoute(incidents) {
     });
     const nogoStr = nogos.join('|');
     
-    const rawPts = routeLayer.getLatLngs();
+    let rawPts = [];
+    routeLayer.eachLayer(layer => {
+        if (layer.getLatLngs) {
+            const lls = layer.getLatLngs();
+            if (lls.length > 0 && Array.isArray(lls[0])) lls.forEach(arr => rawPts.push(...arr));
+            else rawPts.push(...lls);
+        }
+    });
+    
     if (rawPts.length < 2) return;
     
     const pts = cleanTrack(rawPts);
