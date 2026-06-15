@@ -498,10 +498,14 @@ async function calculateAndDrawRoute(lonlats, nogoStr = '', silentError = false)
 
 async function getCityName(lat, lng) {
     try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+        const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`);
         const data = await res.json();
-        if (data && data.display_name) {
-            return data.display_name.split(',')[0].trim();
+        if (data) {
+            let name = data.locality || data.city || data.principalSubdivision || 'Location';
+            if (data.city && data.locality && data.city !== data.locality) {
+                name = `${data.locality}, ${data.city}`;
+            }
+            return name;
         }
     } catch (err) {
         console.error('Reverse geocode error', err);
