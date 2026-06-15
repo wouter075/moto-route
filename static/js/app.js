@@ -369,6 +369,8 @@ function clearAll() {
         routeLayer = null;
     }
     
+    trafficLayerGroup.clearLayers();
+    
     btnCalculate.disabled = true;
     routeStats.classList.add('hidden');
     errorMessage.classList.add('hidden');
@@ -438,8 +440,8 @@ async function calculateAndDrawRoute(lonlats, nogoStr = '', silentError = false)
             }
         });
         
-        // Fit map bounds to route
-        map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+        // Removed auto-zoom per user request
+        // map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
         
         // Extract stats
         const props = data.features[0].properties;
@@ -1207,6 +1209,7 @@ async function generateDetourForActiveRoute(incidents) {
 btnImportClear.addEventListener('click', () => {
     importedRoutesGroup.clearLayers();
     importedRoutes = [];
+    trafficLayerGroup.clearLayers();
     updateImportedRoutesUI();
     gpxUpload.value = '';
     
