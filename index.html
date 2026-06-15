@@ -70,10 +70,6 @@
                     <button id="btn-calculate" class="btn btn-primary" disabled>Calculate Route</button>
                     <button id="btn-clear" class="btn btn-secondary">Clear Map</button>
                 </div>
-                
-                <div class="actions" style="margin-top: 10px;">
-                    <button id="btn-traffic" class="btn btn-secondary" style="width:100%;">Show Traffic Incidents</button>
-                </div>
             </div>
             
             <div id="tab-roundtrip" class="tab-pane">
@@ -140,6 +136,9 @@
                     <span class="label">Est. Time</span>
                     <span class="value" id="stat-time">-- min</span>
                 </div>
+                
+                <button id="btn-analyze-active-route" class="btn btn-secondary" style="margin-top: 10px; width: 100%; border-color: var(--border);">🚦 Analyze Traffic</button>
+
                 <div class="stat" style="flex-direction: column; gap: 4px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px;">
                     <span class="label" style="font-size: 12px;">Export Filename (.gpx)</span>
                     <input type="text" id="export-filename" class="custom-input" style="padding: 8px 12px; font-size: 14px;" value="motoroute">
