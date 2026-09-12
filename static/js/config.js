@@ -1,0 +1,2 @@
+const TOMTOM_API_KEY = "ddzqtBdFhEQ8BDFLSVovNZEZjUp9Eltd";
+const CARTO_API_KEY = "cb1_33j1_1_6ae763709ad40906cf44e66d";
