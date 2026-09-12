@@ -832,107 +832,166 @@ function updateImportedRoutesUI() {
     });
 }
 
+// Flatten a Leaflet layer (polyline or layer group) into a flat array of LatLngs.
+function extractLatLngs(layer) {
+    const pts = [];
+    const flatten = (arr) => {
+        if (arr.length > 0 && Array.isArray(arr[0])) arr.forEach(flatten);
+        else pts.push(...arr);
+    };
+    const collect = (l) => {
+        if (l.eachLayer) l.eachLayer(collect);
+        else if (l.getLatLngs) flatten(l.getLatLngs());
+    };
+    collect(layer);
+    return pts;
+}
+
+// Fetch TomTom incidents in the route bbox, draw those that intersect the route,
+// and return the intersecting incidents.
+async function findAndDrawIncidentsOnRoute(layer) {
+    const bounds = layer.getBounds();
+    const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+    const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}');
+    const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields=${fields}&language=en-GB`;
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Traffic fetch failed");
+    const data = await res.json();
+
+    trafficLayerGroup.clearLayers();
+    const foundIncidents = [];
+
+    if (!data || !data.incidents || typeof turf === 'undefined') return foundIncidents;
+
+    const pts = extractLatLngs(layer).map(p => [p.lng, p.lat]);
+    if (pts.length < 2) return foundIncidents;
+    const routeLine = turf.lineString(pts);
+
+    data.incidents.forEach(inc => {
+        const coords = inc.geometry.coordinates;
+        let incidentGeo;
+        if (inc.geometry.type === 'Point') incidentGeo = turf.point(coords);
+        else if (inc.geometry.type === 'LineString') incidentGeo = turf.lineString(coords);
+        else if (inc.geometry.type === 'MultiLineString') incidentGeo = turf.multiLineString(coords);
+        if (!incidentGeo) return;
+
+        let intersects = false;
+        if (inc.geometry.type === 'Point') {
+            if (turf.pointToLineDistance(incidentGeo, routeLine, {units: 'kilometers'}) < 0.05) intersects = true;
+        } else if (turf.booleanIntersects(incidentGeo, routeLine)) {
+            intersects = true;
+        } else {
+            for (const pt of turf.explode(incidentGeo).features) {
+                if (turf.pointToLineDistance(pt, routeLine, {units: 'kilometers'}) < 0.05) {
+                    intersects = true;
+                    break;
+                }
+            }
+        }
+
+        if (!intersects) return;
+
+        foundIncidents.push(inc);
+        let text = "<strong>⚠️ Traffic Incident on Route!</strong><br>";
+        if (inc.properties && inc.properties.events) {
+            text += inc.properties.events.map(e => e.description).join(', ');
+        }
+        if (inc.properties && inc.properties.magnitudeOfDelay) {
+            text += `<br>Delay: ${inc.properties.magnitudeOfDelay}s`;
+        }
+
+        if (inc.geometry.type === 'Point') {
+            L.marker([coords[1], coords[0]], {
+                icon: L.divIcon({
+                    html: '<div style="font-size:24px; background:yellow; border:2px solid red; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 10px red;">🚧</div>',
+                    className: 'traffic-icon',
+                    iconSize: [32,32],
+                    iconAnchor: [16,16]
+                })
+            }).addTo(trafficLayerGroup).bindPopup(text).openPopup();
+        } else {
+            const latlngs = inc.geometry.type === 'LineString'
+                ? coords.map(c => [c[1], c[0]])
+                : coords.map(line => line.map(c => [c[1], c[0]]));
+            L.polyline(latlngs, {color: 'red', weight: 8, dashArray: '10, 10'}).addTo(trafficLayerGroup).bindPopup(text).openPopup();
+        }
+    });
+
+    return foundIncidents;
+}
+
+// Build BRouter `lonlats` (anchor points along the route, skipping ones inside
+// traffic zones) and `nogo` params for a detour around the given incidents.
+function computeDetour(layer, incidents) {
+    const nogos = [];
+    const nogoZones = [];
+
+    incidents.forEach(inc => {
+        const coords = inc.geometry.coordinates;
+        if (inc.geometry.type === 'Point') {
+            nogos.push(`${coords[0]},${coords[1]},150`);
+            nogoZones.push({pt: turf.point(coords), rad: 0.15});
+        } else if (inc.geometry.type === 'LineString') {
+            const mid = coords[Math.floor(coords.length / 2)];
+            nogos.push(`${mid[0]},${mid[1]},250`);
+            nogoZones.push({pt: turf.point(mid), rad: 0.25});
+        } else if (inc.geometry.type === 'MultiLineString') {
+            const line = coords[0];
+            const mid = line[Math.floor(line.length / 2)];
+            nogos.push(`${mid[0]},${mid[1]},250`);
+            nogoZones.push({pt: turf.point(mid), rad: 0.25});
+        }
+    });
+
+    const rawPts = extractLatLngs(layer);
+    if (rawPts.length < 2) return null;
+
+    const pts = cleanTrack(rawPts);
+    const routeLine = turf.lineString(pts.map(p => [p.lng, p.lat]));
+    const routeLength = turf.length(routeLine, {units: 'kilometers'});
+    const numAnchors = Math.min(50, Math.max(2, Math.floor(routeLength / 2)));
+    const anchorPts = [];
+
+    for (let i = 0; i < numAnchors; i++) {
+        const idx = Math.floor((pts.length - 1) * (i / (numAnchors - 1)));
+        const candidate = pts[idx];
+        const turfPt = turf.point([candidate.lng, candidate.lat]);
+
+        const isInsideNogo = nogoZones.some(n =>
+            turf.distance(turfPt, n.pt, {units: 'kilometers'}) < n.rad + 0.1
+        );
+        if (!isInsideNogo) anchorPts.push(candidate);
+    }
+
+    return {
+        lonlats: anchorPts.map(p => `${p.lng},${p.lat}`).join(';'),
+        nogoStr: nogos.join('|'),
+    };
+}
+
 async function analyzeRouteTraffic(id) {
     const route = importedRoutes.find(r => r.id === id);
     if (!route) return;
-    
+
     const originalBtn = document.querySelector(`.btn-analyze-route[data-id="${id}"]`);
-    if(originalBtn) originalBtn.innerText = '⏳';
-    
+    if (originalBtn) originalBtn.innerText = '⏳';
+
     try {
-        const bounds = route.layer.getBounds();
-        const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
-        const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}');
-        const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields=${fields}&language=en-GB`;
-        
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Traffic fetch failed");
-        const data = await res.json();
-        
-        trafficLayerGroup.clearLayers();
-        let foundIncidents = [];
-        
-        if (data && data.incidents && typeof turf !== 'undefined') {
-            const pts = route.layer.getLatLngs().map(p => [p.lng, p.lat]);
-            if(pts.length < 2) return;
-            const routeLine = turf.lineString(pts);
-            
-            data.incidents.forEach(inc => {
-                let coords = inc.geometry.coordinates;
-                let incidentGeo;
-                
-                if (inc.geometry.type === 'Point') {
-                    incidentGeo = turf.point(coords);
-                } else if (inc.geometry.type === 'LineString') {
-                    incidentGeo = turf.lineString(coords);
-                } else if (inc.geometry.type === 'MultiLineString') {
-                    incidentGeo = turf.multiLineString(coords);
-                }
-                
-                if (!incidentGeo) return;
-                
-                let intersects = false;
-                
-                if (inc.geometry.type === 'Point') {
-                    const dist = turf.pointToLineDistance(incidentGeo, routeLine, {units: 'kilometers'});
-                    if (dist < 0.05) intersects = true; // 50 meters
-                } else {
-                    if (turf.booleanIntersects(incidentGeo, routeLine)) {
-                        intersects = true;
-                    } else {
-                        const points = turf.explode(incidentGeo);
-                        for(let pt of points.features) {
-                            if (turf.pointToLineDistance(pt, routeLine, {units: 'kilometers'}) < 0.05) {
-                                intersects = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if (intersects) {
-                    foundIncidents.push(inc);
-                    let text = "<strong>⚠️ Traffic Incident on Route!</strong><br>";
-                    if (inc.properties && inc.properties.events) {
-                        text += inc.properties.events.map(e => e.description).join(', ');
-                    }
-                    if (inc.properties && inc.properties.magnitudeOfDelay) {
-                        text += `<br>Delay: ${inc.properties.magnitudeOfDelay}s`;
-                    }
-                    
-                    if (inc.geometry.type === 'Point') {
-                        L.marker([coords[1], coords[0]], {
-                            icon: L.divIcon({
-                                html: '<div style="font-size:24px; background:yellow; border:2px solid red; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 10px red;">🚧</div>',
-                                className: 'traffic-icon',
-                                iconSize: [32,32],
-                                iconAnchor: [16,16]
-                            })
-                        }).addTo(trafficLayerGroup).bindPopup(text).openPopup();
-                    } else {
-                        let latlngs = inc.geometry.type === 'LineString' ? coords.map(c => [c[1], c[0]]) : coords.map(line => line.map(c => [c[1], c[0]]));
-                        L.polyline(latlngs, {color: 'red', weight: 8, dashArray: '10, 10'}).addTo(trafficLayerGroup).bindPopup(text).openPopup();
-                    }
-                }
-            });
-        }
-        
+        const foundIncidents = await findAndDrawIncidentsOnRoute(route.layer);
         if (foundIncidents.length > 0) {
             showToast(`Found ${foundIncidents.length} traffic incident(s) on or very close to this route!`, 'warning');
-            
             if (confirm(`⚠️ Found ${foundIncidents.length} traffic incident(s) on this route.\n\nWould you like to calculate a detour route around them?`)) {
-                generateDetour(route, foundIncidents);
+                await generateDetour(route, foundIncidents);
             }
-            
         } else {
             showToast("No traffic incidents found on this route.", 'success');
         }
-        
-    } catch(err) {
+    } catch (err) {
         console.error(err);
         showToast(`Failed to analyze traffic: ${err.message}`, 'error');
     } finally {
-        if(originalBtn) originalBtn.innerText = '🚦';
+        if (originalBtn) originalBtn.innerText = '🚦';
     }
 }
 
@@ -980,73 +1039,15 @@ function cleanTrack(points) {
 }
 
 async function generateDetour(route, incidents) {
-    // 1. Generate nogo strings
-    let nogos = [];
-    let nogoPointsForDistance = []; // For filtering out anchors inside nogos
-    
-    incidents.forEach(inc => {
-        const coords = inc.geometry.coordinates;
-        if (inc.geometry.type === 'Point') {
-            nogos.push(`${coords[0]},${coords[1]},150`); // 150m radius
-            nogoPointsForDistance.push({pt: turf.point(coords), rad: 0.15});
-        } else if (inc.geometry.type === 'LineString') {
-            const midIdx = Math.floor(coords.length / 2);
-            nogos.push(`${coords[midIdx][0]},${coords[midIdx][1]},250`); // Block middle
-            nogoPointsForDistance.push({pt: turf.point(coords[midIdx]), rad: 0.25});
-        } else if (inc.geometry.type === 'MultiLineString') {
-            const line = coords[0];
-            const midIdx = Math.floor(line.length / 2);
-            nogos.push(`${line[midIdx][0]},${line[midIdx][1]},250`);
-            nogoPointsForDistance.push({pt: turf.point(line[midIdx]), rad: 0.25});
-        }
-    });
-    const nogoStr = nogos.join('|');
-    
-    // 2. Extract Anchor Points from imported route
-    const rawPts = route.layer.getLatLngs();
-    if (rawPts.length < 2) return;
-    
-    // Auto-clean the track to ensure BRouter anchors don't get trapped in dead-end spikes
-    const pts = cleanTrack(rawPts);
-    
-    const routeLine = turf.lineString(pts.map(p => [p.lng, p.lat]));
-    const routeLength = turf.length(routeLine, {units: 'kilometers'});
-    
-    // Calculate anchors based on length: ~1 anchor every 2 km, max 50 points (BRouter URL limit)
-    const numAnchors = Math.min(50, Math.max(2, Math.floor(routeLength / 2)));
-    
-    const anchorPts = [];
-    
-    for(let i=0; i<numAnchors; i++) {
-        let idx = Math.floor((pts.length - 1) * (i / (numAnchors - 1)));
-        let candidate = pts[idx];
-        
-        // Skip this anchor point if it falls inside a traffic zone (prevents BRouter from trying to enter the blocked road)
-        let isInsideNogo = false;
-        let turfPt = turf.point([candidate.lng, candidate.lat]);
-        for(let n of nogoPointsForDistance) {
-            // Buffer it by an extra 100m to ensure BRouter has space to maneuver
-            if (turf.distance(turfPt, n.pt, {units: 'kilometers'}) < n.rad + 0.1) { 
-                isInsideNogo = true;
-                break;
-            }
-        }
-        
-        if (!isInsideNogo) {
-            anchorPts.push(candidate);
-        }
-    }
-    const lonlats = anchorPts.map(p => `${p.lng},${p.lat}`).join(';');
-    
-    // 3. Grey out the original route
+    const detour = computeDetour(route.layer, incidents);
+    if (!detour) return;
+
     route.layer.setStyle({color: '#6b7280', opacity: 0.5, dashArray: '5, 5'});
     route.name = route.name + " (Original)";
     updateImportedRoutesUI();
-    
-    // 4. Calculate Detour
+
     showToast("Calculating smart detour...", "info");
-    
-    await calculateAndDrawRoute(lonlats, nogoStr);
+    await calculateAndDrawRoute(detour.lonlats, detour.nogoStr);
 }
 
 const btnAnalyzeActiveRoute = document.getElementById('btn-analyze-active-route');
@@ -1056,107 +1057,21 @@ if (btnAnalyzeActiveRoute) {
             showToast("No active route generated yet.", "warning");
             return;
         }
-        
+
         const originalText = btnAnalyzeActiveRoute.innerText;
         btnAnalyzeActiveRoute.innerText = '⏳ Analyzing...';
-        
+
         try {
-            const bounds = routeLayer.getBounds();
-            const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
-            const fields = encodeURIComponent('{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description}}}}');
-            const url = `https://api.tomtom.com/traffic/services/5/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields=${fields}&language=en-GB`;
-            
-            const res = await fetch(url);
-            if (!res.ok) throw new Error("Traffic fetch failed");
-            const data = await res.json();
-            
-            trafficLayerGroup.clearLayers();
-            let foundIncidents = [];
-            
-            if (data && data.incidents && typeof turf !== 'undefined') {
-                let rawPts = [];
-                routeLayer.eachLayer(layer => {
-                    if (layer.getLatLngs) {
-                        const lls = layer.getLatLngs();
-                        if (lls.length > 0 && Array.isArray(lls[0])) lls.forEach(arr => rawPts.push(...arr));
-                        else rawPts.push(...lls);
-                    }
-                });
-                
-                const pts = rawPts.map(p => [p.lng, p.lat]);
-                if(pts.length < 2) return;
-                const routeLine = turf.lineString(pts);
-                
-                data.incidents.forEach(inc => {
-                    let coords = inc.geometry.coordinates;
-                    let incidentGeo;
-                    
-                    if (inc.geometry.type === 'Point') {
-                        incidentGeo = turf.point(coords);
-                    } else if (inc.geometry.type === 'LineString') {
-                        incidentGeo = turf.lineString(coords);
-                    } else if (inc.geometry.type === 'MultiLineString') {
-                        incidentGeo = turf.multiLineString(coords);
-                    }
-                    
-                    if (!incidentGeo) return;
-                    
-                    let intersects = false;
-                    
-                    if (inc.geometry.type === 'Point') {
-                        const dist = turf.pointToLineDistance(incidentGeo, routeLine, {units: 'kilometers'});
-                        if (dist < 0.05) intersects = true;
-                    } else {
-                        if (turf.booleanIntersects(incidentGeo, routeLine)) {
-                            intersects = true;
-                        } else {
-                            const points = turf.explode(incidentGeo);
-                            for(let pt of points.features) {
-                                if (turf.pointToLineDistance(pt, routeLine, {units: 'kilometers'}) < 0.05) {
-                                    intersects = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (intersects) {
-                        foundIncidents.push(inc);
-                        let text = "<strong>⚠️ Traffic Incident on Route!</strong><br>";
-                        if (inc.properties && inc.properties.events) {
-                            text += inc.properties.events.map(e => e.description).join(', ');
-                        }
-                        if (inc.properties && inc.properties.magnitudeOfDelay) {
-                            text += `<br>Delay: ${inc.properties.magnitudeOfDelay}s`;
-                        }
-                        
-                        if (inc.geometry.type === 'Point') {
-                            L.marker([coords[1], coords[0]], {
-                                icon: L.divIcon({
-                                    html: '<div style="font-size:24px; background:yellow; border:2px solid red; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 10px red;">🚧</div>',
-                                    className: 'traffic-icon',
-                                    iconSize: [32,32],
-                                    iconAnchor: [16,16]
-                                })
-                            }).addTo(trafficLayerGroup).bindPopup(text).openPopup();
-                        } else {
-                            let latlngs = inc.geometry.type === 'LineString' ? coords.map(c => [c[1], c[0]]) : coords.map(line => line.map(c => [c[1], c[0]]));
-                            L.polyline(latlngs, {color: 'red', weight: 8, dashArray: '10, 10'}).addTo(trafficLayerGroup).bindPopup(text).openPopup();
-                        }
-                    }
-                });
-            }
-            
+            const foundIncidents = await findAndDrawIncidentsOnRoute(routeLayer);
             if (foundIncidents.length > 0) {
                 showToast(`Found ${foundIncidents.length} traffic incident(s) on this route!`, 'warning');
                 if (confirm(`⚠️ Found ${foundIncidents.length} traffic incident(s) on your generated route.\n\nWould you like BRouter to calculate a smart detour around them?`)) {
-                    generateDetourForActiveRoute(foundIncidents);
+                    await generateDetourForActiveRoute(foundIncidents);
                 }
             } else {
                 showToast("No traffic incidents found on this route.", 'success');
             }
-            
-        } catch(err) {
+        } catch (err) {
             console.error(err);
             showToast(`Failed to analyze traffic: ${err.message}`, 'error');
         } finally {
@@ -1166,65 +1081,11 @@ if (btnAnalyzeActiveRoute) {
 }
 
 async function generateDetourForActiveRoute(incidents) {
-    let nogos = [];
-    let nogoPointsForDistance = [];
-    
-    incidents.forEach(inc => {
-        const coords = inc.geometry.coordinates;
-        if (inc.geometry.type === 'Point') {
-            nogos.push(`${coords[0]},${coords[1]},150`);
-            nogoPointsForDistance.push({pt: turf.point(coords), rad: 0.15});
-        } else if (inc.geometry.type === 'LineString') {
-            const midIdx = Math.floor(coords.length / 2);
-            nogos.push(`${coords[midIdx][0]},${coords[midIdx][1]},250`);
-            nogoPointsForDistance.push({pt: turf.point(coords[midIdx]), rad: 0.25});
-        } else if (inc.geometry.type === 'MultiLineString') {
-            const line = coords[0];
-            const midIdx = Math.floor(line.length / 2);
-            nogos.push(`${line[midIdx][0]},${line[midIdx][1]},250`);
-            nogoPointsForDistance.push({pt: turf.point(line[midIdx]), rad: 0.25});
-        }
-    });
-    const nogoStr = nogos.join('|');
-    
-    let rawPts = [];
-    routeLayer.eachLayer(layer => {
-        if (layer.getLatLngs) {
-            const lls = layer.getLatLngs();
-            if (lls.length > 0 && Array.isArray(lls[0])) lls.forEach(arr => rawPts.push(...arr));
-            else rawPts.push(...lls);
-        }
-    });
-    
-    if (rawPts.length < 2) return;
-    
-    const pts = cleanTrack(rawPts);
-    const routeLine = turf.lineString(pts.map(p => [p.lng, p.lat]));
-    const routeLength = turf.length(routeLine, {units: 'kilometers'});
-    
-    const numAnchors = Math.min(50, Math.max(2, Math.floor(routeLength / 2)));
-    const anchorPts = [];
-    
-    for(let i=0; i<numAnchors; i++) {
-        let idx = Math.floor((pts.length - 1) * (i / (numAnchors - 1)));
-        let candidate = pts[idx];
-        
-        let isInsideNogo = false;
-        let turfPt = turf.point([candidate.lng, candidate.lat]);
-        for(let n of nogoPointsForDistance) {
-            if (turf.distance(turfPt, n.pt, {units: 'kilometers'}) < n.rad + 0.1) { 
-                isInsideNogo = true;
-                break;
-            }
-        }
-        if (!isInsideNogo) {
-            anchorPts.push(candidate);
-        }
-    }
-    const lonlats = anchorPts.map(p => `${p.lng},${p.lat}`).join(';');
-    
+    const detour = computeDetour(routeLayer, incidents);
+    if (!detour) return;
+
     showToast("Calculating smart detour...", "info");
-    await calculateAndDrawRoute(lonlats, nogoStr);
+    await calculateAndDrawRoute(detour.lonlats, detour.nogoStr);
 }
 
 btnImportClear.addEventListener('click', () => {
